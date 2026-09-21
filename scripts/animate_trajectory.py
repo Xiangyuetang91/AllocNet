@@ -60,12 +60,46 @@ def read_obstacles(path):
     return obs
 
 
+def read_cloud(path, z_slice=None):
+    """读取真实地图点云 (x,y,z)，可选高度切片。"""
+    if not path or not os.path.isfile(path):
+        return None
+    xs, ys = [], []
+    with open(path) as f:
+        first = True
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            if first:
+                first = False
+                if line.lower().startswith("x"):
+                    continue
+            p = line.split(",")
+            if len(p) < 3:
+                continue
+            try:
+                x, y, z = float(p[0]), float(p[1]), float(p[2])
+            except ValueError:
+                continue
+            if z_slice and not (z_slice[0] <= z <= z_slice[1]):
+                continue
+            xs.append(x)
+            ys.append(y)
+    return (xs, ys) if xs else None
+
+
 def main():
     ap = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--csv", required=True)
-    ap.add_argument("--obstacles", default=None)
+    ap.add_argument("--obstacles", default=None,
+                    help="障碍圆清单 (cx,cy,r)，离线演示用")
+    ap.add_argument("--cloud", default=None,
+                    help="真实地图点云 (x,y,z)，由 dump_cloud.py 导出")
+    ap.add_argument("--cloud-z", default=None,
+                    help="点云高度切片 lo,hi（米）")
     ap.add_argument("--out", default="trajectory_anim.gif")
     ap.add_argument("--frames", type=int, default=100, help="动画帧数")
     ap.add_argument("--fps", type=int, default=12)
@@ -76,6 +110,14 @@ def main():
     if not rows:
         sys.exit("CSV 为空")
     obstacles = read_obstacles(args.obstacles)
+    zs = None
+    if args.cloud_z:
+        lo, hi = [float(v) for v in args.cloud_z.split(",")]
+        zs = (lo, hi)
+    cloud = read_cloud(args.cloud, zs)
+    if cloud:
+        print("[anim] 载入点云 %d 点%s" % (len(cloud[0]),
+              "（切片 %s）" % (zs,) if zs else ""))
 
     planned = [r for r in rows if r[5] == "planned"]
     flight = [r for r in rows if r[5] == "flight"]
@@ -110,11 +152,16 @@ def main():
         head = trace[idx]
 
         fig, ax = plt.subplots(figsize=(7, 7), dpi=110)
-        for (cx, cy, r) in obstacles:
-            ax.add_patch(Circle((cx, cy), r, color="#555555", alpha=0.35,
-                                zorder=1))
-            ax.add_patch(Circle((cx, cy), r, fill=False, color="#222222",
-                                lw=1.0, zorder=2))
+        if cloud:
+            # 真实地图：用点云画障碍（比规则圆准确）
+            ax.scatter(cloud[0], cloud[1], s=1.2, c="#666666", alpha=0.4,
+                       marker="s", zorder=1)
+        else:
+            for (cx, cy, r) in obstacles:
+                ax.add_patch(Circle((cx, cy), r, color="#555555", alpha=0.35,
+                                    zorder=1))
+                ax.add_patch(Circle((cx, cy), r, fill=False, color="#222222",
+                                    lw=1.0, zorder=2))
 
         if teleop:
             ax.plot([r[1] for r in teleop], [r[2] for r in teleop],

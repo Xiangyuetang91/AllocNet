@@ -77,11 +77,16 @@ class TrajectoryRecorder(object):
         with open(self.output, "w", newline="") as f:
             csv.DictWriter(f, fieldnames=FIELDS).writeheader()
 
-    def _add(self, x, y, z, source, v=None):
+    def _add(self, x, y, z, source, v=None, throttle=True):
+        """追加一个采样点。
+
+        throttle=False 用于**批量**数据（如 /visualizer/trajectory 一次性
+        发布的整条轨迹，1700+ 个点）。这类数据时间戳相同，若照常按
+        min_dt 限流，只会写下第一个点，整条轨迹就丢了。
+        """
         now = rospy.Time.now().to_sec()
         t = now - self.t0
-        # 按来源分别限流
-        if t - self.last_t.get(source, -1e9) < self.min_dt:
+        if throttle and t - self.last_t.get(source, -1e9) < self.min_dt:
             return
         self.last_t[source] = t
         self.rows.append({
@@ -109,15 +114,15 @@ class TrajectoryRecorder(object):
             for p in msg.points:
                 self._add(p.x, p.y, p.z, src)
         elif ns == "trajectory":
-            # LINE_LIST：成对出现，按顺序展开并去重
+            # LINE_LIST：点成对出现（段起点/段终点）。
+            # 整条轨迹是一次性发布的，必须**关掉限流**逐点记录，
+            # 否则只会记下第一个点。
             pts = [(p.x, p.y, p.z) for p in msg.points]
-            seq = []
-            for i in range(0, len(pts) - 1, 2):
-                seq.append(pts[i])
+            seq = [pts[i] for i in range(0, len(pts) - 1, 2)]
             if pts:
                 seq.append(pts[-1])
             for (x, y, z) in seq:
-                self._add(x, y, z, "planned")
+                self._add(x, y, z, "planned", throttle=False)
         elif ns == "teleop_cursor":
             # 只记球体（id=0），跳过朝向箭头
             if msg.id == 0:

@@ -331,65 +331,81 @@ time,x,y,z,v,source
   <img src="docs/sim_vis.gif"/>
 </p>
 
-本分支键盘遥操作的 RViz 实拍：**待补充**。
+本分支在 Ubuntu 20.04 + ROS Noetic 虚拟机内的实跑结果（见 §6.6 运行流程）。
 
-> ⏳ `docs/assets/rviz_planning.png`（静态规划截图）与
-> `docs/assets/teleop_demo.gif`（键盘控制 + 动态避障）需要在
-> Ubuntu 20.04 + ROS Noetic 虚拟机内构建并运行 `teleop_planning.launch`
-> 后采集。采集流程已脚本化，见 §6.1 与 §6.4。
->
-> 这两张图目前**尚未产出**，为避免出现无效链接，此处暂不嵌入。
-> 构建完成后按 §6.4 执行，图片会自动写入 `docs/assets/` 并被本节引用。
+> **说明**：本机的 RViz 截图（`rviz_planning.png`）与屏幕录制 GIF
+> 需要在虚拟机图形桌面内交互采集，当前环境无法自动完成，
+> 因此本节以**真实仿真的数据可视化**替代：下面所有图表均由
+> `record_trajectory.py` 在真实 ROS 运行中抓取的日志绘制，
+> 障碍物来自 `dump_cloud.py` 导出的**真实地图点云**。
 
-## 5.2 键盘轨迹与速度曲线
+## 5.2 真实仿真结果
 
-用 `offline_demo.py` 离线复现同一套键位序列与规划流程（来源说明见 §5.3），
-产出可复现的定量结果：
+运行条件：`teleop_planning.launch`，CPU 推理，地图 20×20×5 m / 0.1 m 分辨率，
+规划起终点 (0, −9, 1.5) → (9, 9, 1.5)。
+
+### 三维轨迹
 
 <p align="center">
   <img src="docs/assets/trajectory_3d.png" width="700"/>
 </p>
 
+### 俯视图（含真实障碍点云）
+
+这是最能说明问题的一张图：把 AllocNet 规划出的轨迹叠加在
+**真实地图点云**（按飞行高度 0.9–2.1 m 切片）之上，
+可以清楚看到轨迹如何在障碍之间穿行。
+
 <p align="center">
-  <img src="docs/assets/trajectory_topdown.png" width="600"/>
+  <img src="docs/assets/trajectory_topdown.png" width="620"/>
+  <br/>
+  <em>蓝色为 AllocNet 规划轨迹，红色为实飞跟踪，灰点为真实障碍</em>
 </p>
+
+### 速度曲线
 
 <p align="center">
   <img src="docs/assets/speed_profile.png" width="700"/>
 </p>
 
+### 轨迹推进动画
+
 <p align="center">
   <img src="docs/assets/trajectory_anim.gif" width="560"/>
-  <br/>
-  <em>轨迹随时间推进的动画重放</em>
 </p>
 
 ### 定量指标
 
 | 指标 | 数值 |
 |---|---|
-| 键盘游标终位 | (−8.00, 2.00, 1.50) m |
-| 规划起终点 | (−8.0, 2.0, 1.5) → (8.0, 2.0, 1.6) |
-| **最小障碍间隙** | **0.746 m**（最近障碍半径 1.2 m） |
-| 绕行幅度 | 偏离直线 2.10 m |
-| 峰值速度 | 4.0 m/s（受 `MaxVelBox` 约束） |
+| 规划起终点 | (0, −9, 1.5) → (9, 9, 1.5) m |
+| 直线距离 / 实际航程 | 20.1 m / 约 22 m（绕行） |
+| **规划耗时** | **93.6 ms**（AllocNet 推理 + QP 优化） |
+| 规划轨迹采样点 | 1065 |
+| 实飞跟踪采样点 | 402 |
+| 峰值速度 | 4.03 m/s（受 `MaxVelBox=4.0` 约束） |
+| 起终点余隙 | 2.40 m / 约 1.5 m（到最近障碍点） |
+| `Infeasible` 次数 | **0**（首组候选即通过） |
 
 ## 5.3 素材来源说明（重要）
 
-为保证实验记录可信，此处明确区分两类素材：
-
-| 素材 | 来源 | 是否真实 ROS 运行 |
+| 素材 | 来源 | 真实 ROS 运行 |
 |---|---|:---:|
 | `docs/sim_vis.gif` | 上游仓库，RViz 录制 | ✅ |
-| `docs/assets/rviz_planning.png` | 本分支，VM 内 RViz 截图 | ✅ |
-| `docs/assets/teleop_demo.gif` | 本分支，VM 内 RViz 抓帧合成 | ✅ |
-| `docs/assets/trajectory_*.png` | `offline_demo.py` 离线复现 | ⚠️ |
-| `docs/assets/speed_profile.png` | 同上 | ⚠️ |
-| `docs/assets/trajectory_anim.gif` | `animate_trajectory.py` 渲染 | ⚠️ |
+| `docs/assets/trajectory_3d.png` | 真实 ROS 运行日志绘制 | ✅ |
+| `docs/assets/trajectory_topdown.png` | 同上 + 真实地图点云 | ✅ |
+| `docs/assets/speed_profile.png` | 同上 | ✅ |
+| `docs/assets/trajectory_anim.gif` | 同上数据渲染 | ✅ |
+| `docs/assets/rviz_planning.png` | 需图形桌面交互采集 | ⏳ 未产出 |
+| `docs/assets/teleop_demo.gif` | 同上 | ⏳ 未产出 |
 
-`offline_demo.py` 复现的是**算法层的数据流**（键位序列 → 航点 → 时间分配 →
-轨迹 → 速度剖面），用于在没有 ROS 环境时也能产出可复现的定量图表。
-它**不替代** RViz 仿真验证，两者互为补充。
+轨迹数据来自 `record_trajectory.py` 在 VM 内实际运行中抓取的
+`allocnet_trajectory.csv`；障碍点云来自 `dump_cloud.py` 导出的真实
+`/structure_map/global_gridmap`。两者都是真实 ROS 运行的产物。
+
+`offline_demo.py` 保留作为**无 ROS 环境时的兜底**：它复现算法层数据流
+（键位序列 → 航点 → 时间分配 → 轨迹 → 速度剖面），
+可在没有 ROS 的机器上验证绘图链路，但**不作为实验证据**。
 
 ---
 
@@ -421,6 +437,131 @@ bash vm_setup_build.sh 2>&1 | tee ~/build.log
 | **SSH 地址** | `src/utils.rosinstall` 用 `git@github.com:`，无 SSH key 时 `wstool update` 直接失败 | 本分支已改写为 HTTPS |
 | **无 GPU** | GPU 模型 `seq5_tokenthresh0_35.pt` 在无 CUDA 环境加载报错 | 用 `*_cpu.pt` + 确认 `device(torch::kCPU)` |
 | **高度语义** | 直接设 `position.z` 无效，航点高度不对 | 高度须写入 `orientation.z`（见 §2.2） |
+| **`set -u` 杀脚本** | 构建脚本打印完标题就无声退出，无任何报错 | ROS 的 `setup.bash` 引用未定义变量；source 时须临时 `set +u` |
+| **ROS apt 密钥过期** | `EXPKEYSIG ... Open Robotics`，装不上依赖 | 重新获取 `ros.asc`，并移除 hosts 对 `packages.ros.org` 的劫持 |
+| **目标点被静默丢弃** | 发了 goal 但规划器毫无反应，日志无任何输出 | 见 §6.5 地图初始化时序 |
+
+## 6.5 目标点被静默丢弃（重要时序陷阱）
+
+**症状**：向 `/move_base_simple/goal` 发布起终点后，规划器完全没有反应 ——
+不规划、不报错、日志里连一行输出都没有。
+
+**原因**：`learning_planning.cpp` 的 `targetCallBack` 第一句就是
+
+```cpp
+inline void targetCallBack(const geometry_msgs::PoseStamped::ConstPtr &msg)
+{
+    if (mapInitialized)   // ← 为 false 时整个函数体被跳过，静默 return
+    { ... }
+    return;
+}
+```
+
+而 `mapInitialized` **只在 `mapCallBack` 里置位**，且该回调只在**第一次**
+收到点云时生效（`if (!mapInitialized)`）。
+
+**关键**：`structure_map` 的地图点云是**一次性发布**的，之后不再重发。
+若规划器与地图节点同时启动，存在竞态 —— 规划器可能错过那一帧，
+`mapInitialized` 就永远是 `false`，此后所有目标点都被静默丢弃。
+
+**这也是上游要求"点击 2D Nav Goal 才能触发规划"的隐含前提**：RViz 的
+`SetGoal` 工具交互过程会给地图链路足够的建立时间，掩盖了这个竞态。
+
+**⚠ 但"重发地图"这件事本身是个陷阱，见下。**
+
+### 6.5.1 不要用 `change_map` 来"重发地图"
+
+很多资料会建议用 `/structure_map/change_map` 迫使地图重发。**在本仓库上这是错的**，
+它会造成极难察觉的地图污染。看 `kr_param_map/param_env/src/structure_map.cpp`：
+
+```cpp
+void genMapCallback(const std_msgs::Bool& msg) {
+  _seed += 1.0;                                    // 换随机种子
+  _struct_map_gen.change_ratios(_seed, false, dt); // ← 重新随机化障碍比例
+  _num += 1;
+  pubSensedPoints();
+}
+```
+
+`change_map` 的语义是「**换一张新地图**」，不是「重发当前地图」，而且
+`change_ratios()` 会把障碍比例重新随机化。实测每发一次，障碍比例都会畸变：
+
+| 地图 | cylinders | circles | gates |
+|---|---|---|---|
+| 冷启动原始地图 | 12.05% | 0.57% | 0.23% |
+| `change_map` x3 后 | 3.42% | 5.58% | 12.30% |
+| `change_map` x6 后 | 14.16% | 13.42% | 3.88% |
+
+后果：地图点云从 **30.2 万点涨到 49.5 万点**，飞行高度切片内的最小余隙
+从 2.4 m 掉到 1.0 m，**任何航点都会被判 `Infeasible`**
+（实测 24 组候选全部被拒，`Infeasible` 刷屏）。
+
+### 6.5.2 正确的唤醒方式：`change_res`
+
+`resCallback` 在分辨率不变时会走 `changeRes -> resetMap -> pubSensedPoints`，
+即**重新发布同一张地图，障碍内容不变**：
+
+```cpp
+void resCallback(const std_msgs::Float32& msg) {
+  float inv_res = 1.0 / msg.data;
+  if (inv_res - float((int)inv_res) < 1e-6) {
+    _grid_mpa.resolution_ = msg.data;
+    _struct_map_gen.changeRes(_grid_mpa.resolution_);
+    _struct_map_gen.resetMap();     // 重置但种子不变 -> 同一张图
+    pubSensedPoints();              // 重新发布
+  }
+}
+```
+
+因此**用当前分辨率**（默认 0.1）发一次 `change_res`，即可唤醒规划器的
+`mapInitialized` 而不破坏地图：
+
+```bash
+rostopic pub -1 /structure_map/change_res std_msgs/Float32 "data: 0.1"
+```
+
+实测对照（同一份代码、同一张原始地图）：
+
+| 唤醒方式 | 地图点数 | 切片内最大余隙 | 候选通过率 |
+|---|---|---|---|
+| 不唤醒 | 30.2 万 | — | 回调静默跳过，无任何输出 |
+| `change_map` x3 | 49.5 万（已污染） | 1.0 m | **0 / 24** |
+| **`change_res` x1** | **30.1 万（原图）** | **2.4 m** | **1 / 1 ✔** |
+
+> 类型提示：`change_map` 与 `change_res` 的消息类型分别是
+> `std_msgs/Bool` 与 `std_msgs/Float32`（**不是** `Empty`），
+> 发错类型会被 ROS 拒绝并报 `topic types do not match`。
+
+## 6.6 无 GUI 环境下的完整运行序列
+
+```bash
+# 1. 启动（不含 RViz）
+roslaunch planner teleop_planning.launch use_gui:=false
+
+# 2. 等地图生成完成（约 40 秒），确认日志出现
+#    "Finished generate random map" 与 "model loaded"
+
+# 3. 用 change_res 唤醒规划器的 mapInitialized（不要用 change_map，见 6.5.1）
+rostopic pub -1 /structure_map/change_res std_msgs/Float32 "data: 0.1"
+sleep 4
+
+# 4. 下发起终点（高度写在 orientation.z，见 2.2）
+rostopic pub -1 /move_base_simple/goal geometry_msgs/PoseStamped   "{header: {frame_id: 'odom'}, pose: {position: {x: 0.0, y: -9.0, z: 1.5}, orientation: {z: 0.283, w: 1.0}}}"
+sleep 3
+rostopic pub -1 /move_base_simple/goal geometry_msgs/PoseStamped   "{header: {frame_id: 'odom'}, pose: {position: {x: 9.0, y: 9.0, z: 1.5}, orientation: {z: 0.283, w: 1.0}}}"
+```
+
+自动化版本见 `scripts/vm_run_demo.sh`。
+
+> **两个观察陷阱**
+>
+> 1. C++ 规划器用 `printf` 输出，stdout 重定向到文件时是**块缓冲**的
+>    （约 4 KB 才落盘）。规划是否成功不要只看日志文件 —— 实测成功时
+>    日志里可能一行都没写出来，应检查 `/visualizer/trajectory` 是否有点。
+> 2. `/structure_map/global_gridmap` **不是 latched 话题**，点云只在生成时
+>    发布一次。外部工具若在发布之后才订阅，会永久错过地图。想拿到地图，
+>    必须**先建立订阅、再发 `change_res`**，两步在同一进程内按序完成
+>    （见 `dump_cloud.py`）。
 
 ## 6.3 手工构建
 

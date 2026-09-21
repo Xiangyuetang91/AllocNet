@@ -67,7 +67,14 @@ def pick(data, *names):
 
 
 def split_runs(times, gap=1.0):
-    """按时间间隔切分连续段，避免多段轨迹被连成一条斜线。"""
+    """按时间间隔切分连续段，避免多段轨迹被连成一条斜线。
+
+    注意：`planned` 点位来自一次性发布的整条轨迹 Marker，它们的 time
+    全都相同（同一次发布）。这种情况不能按时间切分，否则会被切成
+    一个个孤立点。此时直接整段返回。
+    """
+    if len(times) > 1 and times[-1] - times[0] < 1e-6:
+        return [list(range(len(times)))]
     runs, cur = [], [0]
     for i in range(1, len(times)):
         if times[i] - times[i - 1] > gap:
@@ -102,23 +109,64 @@ def load_obstacles(path):
     return obs
 
 
+def load_cloud(path, z_slice=None):
+    """读取地图点云 CSV (x,y,z)。z_slice=(lo,hi) 时只保留该高度带。
+
+    真实 ROS 运行导出的障碍是点云（dump_cloud.py），不是规则圆柱，
+    因此优先用点云作图，障碍圆只在离线演示时才会用到。
+    """
+    if not path or not os.path.isfile(path):
+        return None
+    xs, ys = [], []
+    with open(path) as f:
+        first = True
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            if first:
+                first = False
+                if line.startswith("x"):
+                    continue
+            p = line.split(",")
+            if len(p) < 3:
+                continue
+            try:
+                x, y, z = float(p[0]), float(p[1]), float(p[2])
+            except ValueError:
+                continue
+            if z_slice and not (z_slice[0] <= z <= z_slice[1]):
+                continue
+            xs.append(x)
+            ys.append(y)
+    return (xs, ys) if xs else None
+
+
+def draw_cloud_2d(ax, cloud, label=True):
+    """俯视图里用散点画障碍点云。"""
+    if not cloud:
+        return
+    xs, ys = cloud
+    ax.scatter(xs, ys, s=1.0, c="#555555", alpha=0.35, marker="s",
+               zorder=1, label="Obstacles (map point cloud)" if label else None)
+
+
 def draw_obstacles_2d(ax, obstacles):
-    """俯视图里的障碍圆。"""
-    for (cx, cy, r) in obstacles:
+    """俯视图里的障碍圆（离线演示用）。"""
+    for i, (cx, cy, r) in enumerate(obstacles):
         ax.add_patch(plt.Circle((cx, cy), r, color="#444444",
-                                alpha=0.35, zorder=1))
+                                alpha=0.35, zorder=1,
+                                label="Obstacle (cylinder)" if i == 0 else None))
         ax.add_patch(plt.Circle((cx, cy), r, fill=False,
                                 color="#222222", lw=1.0, zorder=2))
-    if obstacles:
-        # 只为第一个障碍加图例条目，避免重复
-        cx, cy, r = obstacles[0]
-        ax.add_patch(plt.Circle((cx, cy), r, color="#444444",
-                                alpha=0.35, label="Obstacle (cylinder)",
-                                zorder=1))
 
 
-def clear_topdown_axes(ax, obstacles, data):
-    """按内容自适应俯视图范围，避免轨迹被压成一条细带。"""
+def clear_topdown_axes(ax, obstacles, data, cloud=None, track_only=False):
+    """按内容自适应俯视图范围。
+
+    track_only=True 时只用轨迹本身的包络（外加少量留白），
+    避免整张地图的点云把轨迹压成一小团。
+    """
     xs = [0.0]
     ys = [0.0]
     for d in data.values():
@@ -127,9 +175,17 @@ def clear_topdown_axes(ax, obstacles, data):
     for (cx, cy, r) in obstacles:
         xs.extend([cx - r, cx + r])
         ys.extend([cy - r, cy + r])
+
+    if track_only and (len(xs) > 1):
+        pad = 2.5
+    else:
+        if cloud:
+            xs.extend(cloud[0])
+            ys.extend(cloud[1])
+        pad = 1.5
+
     if not xs:
         return
-    pad = 1.5
     ax.set_xlim(min(xs) - pad, max(xs) + pad)
     ax.set_ylim(min(ys) - pad, max(ys) + pad)
 
@@ -148,12 +204,15 @@ def draw_obstacles_3d(ax, obstacles, z0=0.0, z1=3.0):
                         linewidth=0, shade=False)
 
 
-def plot_3d(data, out_path, obstacles=None):
+def plot_3d(data, out_path, obstacles=None, cloud=None):
     obstacles = obstacles or []
     fig = plt.figure(figsize=(11, 8), dpi=150)
     ax = fig.add_subplot(111, projection="3d")
 
-    draw_obstacles_3d(ax, obstacles)
+    if obstacles:
+        draw_obstacles_3d(ax, obstacles)
+    # 注意：3D 视图里不画点云。地图有数十万点，全画出来是一团黑，
+    # 反而看不清轨迹；障碍物仅在俯视图（plot_topdown）中呈现。
 
     for src, style in SOURCE_STYLE.items():
         d = data.get(src)
@@ -192,11 +251,14 @@ def plot_3d(data, out_path, obstacles=None):
     print("[plot] 写出 %s" % out_path)
 
 
-def plot_topdown(data, out_path, obstacles=None):
+def plot_topdown(data, out_path, obstacles=None, cloud=None):
     obstacles = obstacles or []
     fig, ax = plt.subplots(figsize=(8, 8), dpi=150)
 
-    draw_obstacles_2d(ax, obstacles)
+    if obstacles:
+        draw_obstacles_2d(ax, obstacles)
+    elif cloud:
+        draw_cloud_2d(ax, cloud)
 
     for src, style in SOURCE_STYLE.items():
         d = data.get(src)
@@ -220,7 +282,9 @@ def plot_topdown(data, out_path, obstacles=None):
                    marker="o", edgecolors="k", zorder=5,
                    label="%s (%.1f, %.1f)" % (tag, d["x"][0], d["y"][0]))
 
-    clear_topdown_axes(ax, obstacles, data)
+    # 有点云时不要把整图范围撑开，聚焦在轨迹附近
+    clear_topdown_axes(ax, obstacles, data, cloud=cloud,
+                       track_only=bool(cloud and not obstacles))
     ax.set_xlabel("X (m)")
     ax.set_ylabel("Y (m)")
     ax.set_aspect("equal", adjustable="box")
@@ -283,6 +347,13 @@ def main():
     ap.add_argument("--obstacles", default=None,
                     help="障碍物清单 (cx,cy,r 每行一个)，仅离线演示时需要；"
                          "ROS 运行时地图来自点云，可不传")
+    ap.add_argument("--cloud", default=None,
+                    help="真实地图点云 CSV (x,y,z)，由 dump_cloud.py 从 "
+                         "/structure_map/global_gridmap 导出；用于在俯视图上"
+                         "叠加真实障碍")
+    ap.add_argument("--cloud-z", default=None,
+                    help="点云高度切片 lo,hi（米），如 1.2,1.8；只画无人机"
+                         "飞行高度附近的障碍，图更清晰")
     args = ap.parse_args()
 
     data = read_csv(args.csv)
@@ -293,10 +364,24 @@ def main():
     if obstacles:
         print("[plot] 载入 %d 个障碍物" % len(obstacles))
 
+    cloud = None
+    if args.cloud:
+        zs = None
+        if args.cloud_z:
+            lo, hi = [float(v) for v in args.cloud_z.split(",")]
+            zs = (lo, hi)
+        cloud = load_cloud(args.cloud, zs)
+        if cloud:
+            print("[plot] 载入点云 %d 点%s"
+                  % (len(cloud[0]), "（切片 %s）" % (zs,) if zs else ""))
+        else:
+            print("[plot] 警告：点云为空或读取失败")
+
     os.makedirs(args.out_dir, exist_ok=True)
-    plot_3d(data, os.path.join(args.out_dir, "trajectory_3d.png"), obstacles)
+    plot_3d(data, os.path.join(args.out_dir, "trajectory_3d.png"), obstacles,
+            cloud=cloud)
     plot_topdown(data, os.path.join(args.out_dir, "trajectory_topdown.png"),
-                 obstacles)
+                 obstacles, cloud=cloud)
     plot_speed(data, os.path.join(args.out_dir, "speed_profile.png"))
 
 
