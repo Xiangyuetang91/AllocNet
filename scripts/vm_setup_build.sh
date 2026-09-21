@@ -17,7 +17,9 @@
 # =============================================================================
 set -uo pipefail
 
-WS="${WS:-$HOME/catkin_ws}"
+# 默认使用独立工作区。**不要用 ~/catkin_ws** —— 本机该目录已被其它项目
+# （OverFOMO 等）占用，混入 AllocNet 会污染既有构建。
+WS="${WS:-$HOME/allocnet_ws}"
 LIBCURL_VER="2.0.0.dev20230301%2Bcpu"
 LIBTORCH_URL="https://download.pytorch.org/libtorch/nightly/cpu/libtorch-cxx11-abi-shared-with-deps-${LIBCURL_VER}.zip"
 
@@ -26,16 +28,28 @@ warn() { echo -e "\033[33m[warn ]\033[0m $*"; }
 die() { echo -e "\033[31m[fail ]\033[0m $*" >&2; exit 1; }
 
 # ---------------------------------------------------------------------------
-log "步骤 0/7 — 环境自检"
+log "步骤 0/7 — 环境自检 / sudo 准备"
 # ---------------------------------------------------------------------------
 . /opt/ros/noetic/setup.bash 2>/dev/null || die "找不到 /opt/ros/noetic，请先安装 ROS Noetic"
 log "ROS: $(rosversion -d 2>/dev/null || echo unknown)  发行版: $(lsb_release -ds 2>/dev/null)"
 
+# sudo 处理：优先免密；否则用 VM_SUDO_PASS 环境变量刷新时间戳。
+# 注意 sudo 时间戳按 tty 缓存，所以整个构建必须在同一个 ssh 会话里跑完。
+if sudo -n true 2>/dev/null; then
+    log "sudo: 免密可用"
+elif [ -n "${VM_SUDO_PASS:-}" ]; then
+    printf '%s\n' "$VM_SUDO_PASS" | sudo -S -v 2>/dev/null \
+        && { log "sudo: 已用 VM_SUDO_PASS 刷新凭据"; } \
+        || die "sudo 凭据刷新失败"
+else
+    die "sudo 需要密码：请先 export VM_SUDO_PASS=<密码> 再运行"
+fi
+
 # ---------------------------------------------------------------------------
 log "步骤 1/7 — 安装系统依赖 (OMPL / Eigen / catkin tools / Python)"
 # ---------------------------------------------------------------------------
-sudo apt-get update -qq || warn "apt update 失败，继续尝试"
-sudo apt-get install -y -qq \
+sudo -n apt-get update -qq || warn "apt update 失败，继续尝试"
+sudo -n apt-get install -y -qq \
     libompl-dev libeigen3-dev \
     python3-catkin-tools python3-pip python3-rosdep \
     libboost-all-dev cmake build-essential git wget unzip \
@@ -54,7 +68,7 @@ if ! pkg-config --exists osqp 2>/dev/null && [ ! -e /usr/local/lib/libosqp.so ];
     mkdir -p build && cd build
     cmake .. -DCMAKE_BUILD_TYPE=Release >/dev/null || die "osqp cmake 失败"
     make -j"$(nproc)" >/dev/null || die "osqp 编译失败"
-    sudo make install >/dev/null && sudo ldconfig
+    sudo -n make install >/dev/null && sudo -n ldconfig
     log "osqp 安装完成"
 else
     log "osqp 已存在，跳过"
@@ -69,7 +83,7 @@ if [ ! -e /usr/local/lib/libOsqpEigen.so ] && [ ! -e /usr/lib/libOsqpEigen.so ];
     mkdir -p build && cd build
     cmake .. -DCMAKE_BUILD_TYPE=Release >/dev/null || die "osqp-eigen cmake 失败"
     make -j"$(nproc)" >/dev/null || die "osqp-eigen 编译失败"
-    sudo make install >/dev/null && sudo ldconfig
+    sudo -n make install >/dev/null && sudo -n ldconfig
     log "osqp-eigen 安装完成"
 else
     log "osqp-eigen 已存在，跳过"
