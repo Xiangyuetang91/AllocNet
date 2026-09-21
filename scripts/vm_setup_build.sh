@@ -49,10 +49,14 @@ fi
 log "步骤 1/7 — 安装系统依赖 (OMPL / Eigen / catkin tools / Python)"
 # ---------------------------------------------------------------------------
 sudo -n apt-get update -qq || warn "apt update 失败，继续尝试"
+# libsdl1.2-dev / libsdl-image1.2-dev：kr_param_map 的 param_env 包
+# （提供 structure_map 地图节点）依赖 rosdep 键 sdl / sdl-image，
+# 缺了它 param_env 编译不过，而地图节点是整套仿真的前置条件。
 sudo -n apt-get install -y -qq \
     libompl-dev libeigen3-dev \
     python3-catkin-tools python3-pip python3-rosdep \
     libboost-all-dev cmake build-essential git wget unzip \
+    libsdl1.2-dev libsdl-image1.2-dev \
     || die "apt 安装依赖失败"
 
 # ---------------------------------------------------------------------------
@@ -159,12 +163,26 @@ log "步骤 5/7 — catkin build"
 # ---------------------------------------------------------------------------
 cd "$WS"
 catkin config --extend /opt/ros/noetic --cmake-args -DCMAKE_BUILD_TYPE=Release >/dev/null 2>&1
-catkin build -j"$(nproc)" 2>&1 | tail -30
-# catkin build 的失败不一定反映在管道退出码上，用产物存在性判断
+
+# 只构建本实验需要的三个包：
+#   planner       AllocNet 推理 + QP 轨迹优化（含键盘节点）
+#   param_env     地图生成，发布 /structure_map/global_gridmap
+#   vicon_env     kr_param_map 的姊妹包，param_env 的构建依赖
+# 不构建 vicon_env 会因 catkin 依赖顺序报错，但不影响使用。
+catkin build planner param_env vicon_env -j"$(nproc)" 2>&1 | tail -45
+
+# catkin 的失败不一定反映在管道退出码上，用产物存在性判断
+if [ ! -x "$WS/devel/lib/planner/learning_planning" ]; then
+    warn "learning_planning 未生成，尝试回退为全量构建"
+    catkin build -j"$(nproc)" 2>&1 | tail -30
+fi
+
 if [ ! -x "$WS/devel/lib/planner/learning_planning" ]; then
     die "learning_planning 未生成，请查看上方编译错误"
 fi
 log "编译成功: $WS/devel/lib/planner/learning_planning"
+ls -la "$WS/devel/lib/planner/" 2>/dev/null
+ls -la "$WS/devel/lib/param_env/" 2>/dev/null
 
 # ---------------------------------------------------------------------------
 log "步骤 6/7 — 给 Python 脚本加可执行权限"
