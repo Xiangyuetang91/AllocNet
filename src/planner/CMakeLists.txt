@@ -41,3 +41,15 @@ target_link_libraries(learning_planning
 set_property(TARGET learning_planning PROPERTY CXX_STANDARD 14)
 
 
+# ---- 键盘遥操作与数据记录脚本 -------------------------------------------
+# 注册成可执行文件，使 `rosrun planner teleop_keyboard.py` 在
+# devel 与 install 两种空间下都能找到（install 空间必须显式安装）。
+catkin_install_python(PROGRAMS
+  scripts/teleop_keyboard.py
+  scripts/record_trajectory.py
+  scripts/plot_trajectory.py
+  scripts/offline_demo.py
+  DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)
+
+

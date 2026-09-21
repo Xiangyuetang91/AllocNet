@@ -1,0 +1,155 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  teleop_planning.launch : 一键加载地图 + RViz + AllocNet 规划器 + 键盘遥操作
+
+  启动内容
+  ========
+    1. structure_map          随机障碍地图，发布 /structure_map/global_gridmap
+    2. learning_planning_node AllocNet 规划器（CPU 推理）
+    3. teleop_keyboard        键盘遥操作节点
+    4. record_trajectory      数据记录节点（可用 record:=false 关闭）
+    5. rviz                   RViz 可视化
+
+  用法
+  ====
+    roslaunch planner teleop_planning.launch
+    roslaunch planner teleop_planning.launch record:=false      (不记录)
+    roslaunch planner teleop_planning.launch use_gui:=false     (无头模式)
+
+  注意：键盘节点需要 TTY，建议用 rosrun 在独立终端里单独启动
+        rosrun planner teleop_keyboard.py
+-->
+<launch>
+
+  <!-- ============ 地图参数（同时喂给 param_env 和 planner） ============ -->
+  <arg name="map_frame_id"  default="odom"/>
+  <arg name="map_size_x"    default="20"/>
+  <arg name="map_size_y"    default="20"/>
+  <arg name="map_size_z"    default="5"/>
+  <arg name="map_x_origin"  default="-10.0"/>
+  <arg name="map_y_origin"  default="-10.0"/>
+  <arg name="map_z_origin"  default="0.0"/>
+  <arg name="inflate_radius" default="0.2"/>
+
+  <arg name="cloud" default="/structure_map/global_gridmap"/>
+
+  <!-- ============ 运行期开关 ============ -->
+  <arg name="use_gui"  default="true"/>   <!-- false = 不启动 RViz，便于无头运行 -->
+  <arg name="record"   default="true"/>   <!-- false = 不启动数据记录 -->
+  <arg name="echo"     default="false"/>  <!-- true = 打印 speed / thrust 指标 -->
+
+  <!-- 记录文件与绘图输出 -->
+  <arg name="log_csv"  default="$(env HOME)/allocnet_trajectory.csv"/>
+  <arg name="login"    default="false"/>
+
+  <!-- CPU 版模型。若改用 GPU，请把 learning_planner.hpp:29 的
+       device(torch::kCPU) 换成 torch::kGPU 并设 use_cpu_model:=false -->
+  <arg name="use_cpu_model" default="true"/>
+
+  <!-- ================= 1. 地图生成：param_env/structure_map ================= -->
+  <node pkg="param_env" name="structure_map" type="structure_map" output="screen">
+    <remap from="~global_cloud" to="$(arg cloud)"/>
+
+    <param name="map/x_size"     value="$(arg map_size_x)"/>
+    <param name="map/y_size"     value="$(arg map_size_y)"/>
+    <param name="map/z_size"     value="$(arg map_size_z)"/>
+    <param name="map/x_origin"   value="$(arg map_x_origin)"/>
+    <param name="map/y_origin"   value="$(arg map_y_origin)"/>
+    <param name="map/z_origin"   value="$(arg map_z_origin)"/>
+
+    <param name="map/resolution" value="0.1"/>
+    <param name="map/frame_id"   value="$(arg map_frame_id)"/>
+    <param name="map/inflate_radius" value="$(arg inflate_radius)"/>
+
+    <!-- 关闭随机换图，保证键盘实验可复现（要随机地图改成 true） -->
+    <param name="map/auto_change" value="false"/>
+
+    <!-- 障碍物比例：圆柱为主，少量环形/门/椭球/多面体 -->
+    <param name="params/cylinder_ratio" value="0.12" type="double"/>
+    <param name="params/circle_ratio"   value="0.005" type="double"/>
+    <param name="params/gate_ratio"     value="0.002" type="double"/>
+    <param name="params/ellip_ratio"    value="0.01" type="double"/>
+    <param name="params/poly_ratio"     value="0.01" type="double"/>
+
+    <param name="params/w1" value="0.1"/>
+    <param name="params/w2" value="0.6"/>
+    <param name="params/w3" value="2.0"/>
+
+    <!-- 固定随机种子，让每次实验地图一致，便于对比轨迹 -->
+    <param name="params/add_noise" value="false"/>
+    <param name="params/seed"      value="0.5"/>
+
+    <param name="dataset/save_map"    value="false"/>
+    <param name="dataset/samples_num" value="100"/>
+    <param name="dataset/start_index" value="5080900"/>
+    <param name="dataset/path"        value="$(find param_env)/dataset/"/>
+  </node>
+
+  <!-- ================= 2. AllocNet 规划器 ================= -->
+  <node pkg="planner" type="learning_planning" name="learning_planning_node"
+        output="screen">
+    <rosparam file="$(find planner)/config/planner.yaml" command="load"/>
+
+    <param if="$(arg use_cpu_model)" name="ModelPath"
+           value="$(find planner)/models/seq5_tokenthresh0_35_cpu.pt"/>
+    <param unless="$(arg use_cpu_model)" name="ModelPath"
+           value="$(find planner)/models/seq5_tokenthresh0_35.pt"/>
+
+    <param name="ModelMaxSeg" type="int" value="5"/>
+    <param name="frame_id"    value="$(arg map_frame_id)"/>
+    <param name="MapTopic"    value="$(arg cloud)"/>
+
+    <param name="map/x_size"   value="$(arg map_size_x)"/>
+    <param name="map/y_size"   value="$(arg map_size_y)"/>
+    <param name="map/z_size"   value="$(arg map_size_z)"/>
+    <param name="map/x_origin" value="$(arg map_x_origin)"/>
+    <param name="map/y_origin" value="$(arg map_y_origin)"/>
+    <param name="map/z_origin" value="$(arg map_z_origin)"/>
+
+    <param name="map/resolution"     value="0.1"/>
+    <param name="map/inflate_radius" value="$(arg inflate_radius)"/>
+  </node>
+
+  <!-- ================= 3. 键盘遥操作节点 ================= -->
+  <node pkg="planner" type="teleop_keyboard.py" name="teleop_keyboard"
+        output="screen" launch-prefix="$(arg login)">
+    <!-- 地图范围必须与上面一致，节点用它做高度归一化与边界裁剪 -->
+    <param name="frame_id"      value="$(arg map_frame_id)"/>
+    <param name="map_x_size"    value="$(arg map_size_x)"/>
+    <param name="map_y_size"    value="$(arg map_size_y)"/>
+    <param name="map_z_size"    value="$(arg map_size_z)"/>
+    <param name="map_x_origin"  value="$(arg map_x_origin)"/>
+    <param name="map_y_origin"  value="$(arg map_y_origin)"/>
+    <param name="map_z_origin"  value="$(arg map_z_origin)"/>
+    <param name="inflate_radius" value="$(arg inflate_radius)"/>
+
+    <param name="goal_topic" value="/move_base_simple/goal"/>
+    <param name="step"       value="0.5"/>     <!-- 平移步长 m -->
+    <param name="z_step"     value="0.25"/>    <!-- 高度步长 m -->
+    <param name="yaw_step_deg" value="10.0"/>
+    <param name="init_x"     value="0.0"/>
+    <param name="init_y"     value="0.0"/>
+    <param name="init_z"     value="1.0"/>
+    <param name="init_yaw_deg" value="0.0"/>
+    <param name="log_path"   value="$(arg log_csv)"/>
+  </node>
+
+  <!-- ================= 4. 数据记录节点 ================= -->
+  <node if="$(arg record)" pkg="planner" type="record_trajectory.py"
+        name="record_trajectory" output="screen">
+    <param name="output" value="$(arg log_csv)"/>
+    <param name="min_dt" value="0.02"/>
+    <param name="record_planned" value="true"/>
+  </node>
+
+  <!-- ================= 5. 指标打印（可选） ================= -->
+  <node if="$(arg echo)" pkg="rostopic" type="rostopic" name="echo_speed"
+        args="echo /visualizer/speed" output="screen"/>
+  <node if="$(arg echo)" pkg="rostopic" type="rostopic" name="echo_thrust"
+        args="echo /visualizer/total_thrust" output="screen"/>
+
+  <!-- ================= 6. RViz ================= -->
+  <node if="$(arg use_gui)" name="rviz" pkg="rviz" type="rviz"
+        args="-d $(find planner)/config/teleop_planner.rviz" output="screen"/>
+
+</launch>

@@ -18,4 +18,7 @@
   <run_depend>sensor_msgs</run_depend>
   <run_depend>visualization_msgs</run_depend>
 
+  <!-- 键盘遥操作 / 数据记录节点是 rospy 节点 -->
+  <run_depend>rospy</run_depend>
+
 </package>

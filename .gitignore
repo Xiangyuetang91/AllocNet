@@ -2,3 +2,11 @@ src/planner/libtorch/
 .vscode
 __pycache__/
 *.pyc
+
+# 本地运行产物（离线仿真数据、抓帧、打包）
+build_out/
+frames/
+*.tar.gz
+
+# 轨迹记录文件
+allocnet_trajectory*.csv
