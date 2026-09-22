@@ -59,7 +59,11 @@
 
   <!-- 记录文件与绘图输出 -->
   <arg name="log_csv"  default="$(env HOME)/allocnet_trajectory.csv"/>
-  <arg name="login"    default="false"/>
+  <!-- 可选的节点启动前缀。留空即直接启动。
+       ⚠ 不要写成 "false"：launch-prefix 会被当作命令前缀执行，
+       `false <node>` 会让节点注册后立刻以退出码 1 死掉，且不留任何日志。
+       若想给键盘节点一个真正的 TTY，可设 login:="xterm -e"（需要 X）。 -->
+  <arg name="login"    default=""/>
 
   <!-- 是否把地图转成 latched 话题（RViz 后启动也能看到地图） -->
   <arg name="republish_map" default="true"/>

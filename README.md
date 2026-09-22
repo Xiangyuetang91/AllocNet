@@ -342,6 +342,7 @@ rostopic pub -1 /teleop/key std_msgs/String "data: 'aassddg'"
 | `inflate_radius` | `0.2` | 障碍膨胀半径，影响可用高度区间 |
 | `cloud` | `/structure_map/global_gridmap` | `structure_map` 的原始发布话题 |
 | `planner_cloud` | `/map/global_gridmap` | 规划器订阅的地图；设 `republish_map:=false` 时须改回 `cloud` |
+| `login` | 空 | 可选的节点启动前缀。**不要设成 `false`** —— 那会让节点被 `false` 命令吞掉、注册后立刻退出；想给键盘节点 TTY 可设 `login:="xterm -e"` |
 
 ## 4.3 数据记录与绘图
 
@@ -495,6 +496,8 @@ bash vm_setup_build.sh 2>&1 | tee ~/build.log
 | **`set -u` 杀脚本** | 构建脚本打印完标题就无声退出，无任何报错 | ROS 的 `setup.bash` 引用未定义变量；source 时须临时 `set +u` |
 | **ROS apt 密钥过期** | `EXPKEYSIG ... Open Robotics`，装不上依赖 | 重新获取 `ros.asc`，并移除 hosts 对 `packages.ros.org` 的劫持 |
 | **目标点被静默丢弃** | 发了 goal 但规划器毫无反应，日志无任何输出 | 见 §6.5 地图初始化时序 |
+| **`launch-prefix="false"`** | 节点注册后**立刻退出**且不留任何日志 | `launch-prefix` 会作为命令前缀执行，`false <node>` 直接吞掉节点；不用就留空字符串，见 §6.7 |
+| **工作区重复挂载** | `RLException: multiple files named [x.launch] in package [p]` | 同一份代码被挂了两遍，见 §6.8 |
 
 ## 6.5 目标点被静默丢弃（重要时序陷阱）
 
@@ -650,6 +653,82 @@ rostopic pub -1 /move_base_simple/goal geometry_msgs/PoseStamped   "{header: {fr
 >    走 `map_republisher` 转发的 **`/map/global_gridmap`**（latched，随到随取，
 >    推荐）；或者**先建立订阅、再发 `change_res`**，两步在同一进程内按序
 >    完成（见 `dump_cloud.py`）。
+
+## 6.7 `launch-prefix` 不要设成 `false`
+
+`launch-prefix` 的值会作为**命令前缀**拼在节点可执行文件前面执行，
+而不是当作布尔开关。所以
+
+```xml
+<arg name="login" default="false"/>
+...
+<node ... launch-prefix="$(arg login)"/>
+```
+
+实际执行的是 `false /path/to/teleop_keyboard.py` —— `false` 是
+coreutils 里一个立即返回退出码 1 的命令，节点参数被它当成多余参数丢弃，
+于是**节点注册进 ROS master 后立刻死掉，且不产生任何日志**。
+在 `rosnode list` 里能看到它，`roslaunch` 日志里却什么都没有，极难排查。
+
+不用前缀时留**空字符串**：
+
+```xml
+<arg name="login" default=""/>
+```
+
+想给键盘节点一个真正的 TTY（交互式按键），可以用：
+
+```bash
+roslaunch planner teleop_planning.launch login:="xterm -e"   # 需要 X
+```
+
+## 6.8 工作区被重复挂载
+
+**症状**：`roslaunch`/`rospack` 报
+
+```
+RLException: multiple files named [teleop_planning.launch] in package [planner]:
+- /home/user/allocnet_ws/src_allocnet/AllocNet/src/planner/launch/teleop_planning.launch
+- /home/user/allocnet_ws/src/AllocNet/src/planner/launch/teleop_planning.launch
+```
+
+**原因**：`devel/.catkin` 记录了**两个** source space：
+
+```
+$ cat devel/.catkin
+/home/user/allocnet_ws/src_allocnet;/home/user/allocnet_ws/src
+```
+
+而 `src_allocnet/` 下的条目全是**软链接，指回 `src/`**：
+
+```
+src_allocnet/AllocNet     -> /home/user/allocnet_ws/src/AllocNet
+src_allocnet/kr_param_map -> /home/user/allocnet_ws/src/kr_param_map
+```
+
+同一份代码被挂了两遍，`planner` / `param_env` / `vicon_env` 每个包都被
+发现两次，`roslaunch` 拒绝启动。**这不是代码问题，是工作区配置问题。**
+
+**修法**：把那一层多余的挂载点移走，让工作区只剩一个 source space：
+
+```bash
+mv ~/allocnet_ws/src_allocnet ~/allocnet_ws/_bak_src_allocnet
+rm -f ~/allocnet_ws/devel/.catkin      # 它记录着旧的 source space 列表
+cd ~/allocnet_ws && rm -rf build devel && catkin_make
+```
+
+> 注意 `devel/.catkin` 删掉后必须**重新构建**，否则 catkin 不会重新登记
+> source space，`ROS_PACKAGE_PATH` 会退化成只有 `/opt/ros/noetic/share`，
+> 所有包都找不到。
+
+**⚠ 常见连带问题**：`catkin_make --pkg planner` 这类**单包构建**不会构建
+`param_env`。若 `devel/lib/param_env/` 是空的，`structure_map` 会因为
+找不到可执行文件而瞬间退出（`rosrun` 报 `Couldn't find executable
+named structure_map`），表现为"没有地图、规划器毫无反应"。完整构建一次：
+
+```bash
+cd ~/allocnet_ws && catkin_make        # 不要只加 --pkg planner
+```
 
 ## 6.3 手工构建
 
