@@ -809,7 +809,7 @@ Xvfb :99 -screen 0 1280x800x24 -ac +extension GLX +render -noreset &
 export DISPLAY=:99
 export LIBGL_ALWAYS_SOFTWARE=1           # 无 GPU，强制软件渲染
 roslaunch planner teleop_planning.launch use_gui:=false
-rviz -d /tmp/capture_view.rviz &
+rviz -d $(find planner)/config/capture_view.rviz &
 
 # 3. 抓屏（用 import，不要用 scrot）
 import -display :99 -window root /tmp/f.png
