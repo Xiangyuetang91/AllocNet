@@ -46,6 +46,7 @@ set_property(TARGET learning_planning PROPERTY CXX_STANDARD 14)
 # devel 与 install 两种空间下都能找到（install 空间必须显式安装）。
 catkin_install_python(PROGRAMS
   scripts/teleop_keyboard.py
+  scripts/map_republisher.py
   scripts/record_trajectory.py
   scripts/plot_trajectory.py
   scripts/offline_demo.py

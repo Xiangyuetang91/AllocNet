@@ -250,11 +250,19 @@ graph TB
 
 **本分支新增**
 
-| 话题 | 类型 | 发布者 |
-|---|---|---|
-| `/teleop/cursor` | `Marker` | 键盘节点：游标球 + 朝向箭头 |
-| `/teleop/waypoints` | `MarkerArray` | 键盘节点：已下发航点折线 |
-| `/teleop/goal_markers` | `MarkerArray` | 键盘节点：起终点标记 |
+| 话题 | 类型 | 方向 | 说明 |
+|---|---|---|---|
+| `/map/global_gridmap` | `sensor_msgs/PointCloud2` | 发布（latched） | `map_republisher`：原图点云的常驻转发，内容与 `structure_map` 完全一致 |
+| `/map/global_gridmap_vis` | `sensor_msgs/PointCloud2` | 发布（latched） | `map_republisher`：降采样版（1/4），仅供 RViz 流畅渲染 |
+| `/teleop/cursor` | `Marker` | 发布（latched） | 键盘节点：游标球 + 朝向箭头 |
+| `/teleop/waypoints` | `MarkerArray` | 发布（latched） | 键盘节点：已下发航点折线 |
+| `/teleop/goal_markers` | `MarkerArray` | 发布（latched） | 键盘节点：起终点标记（`START #n` / `GOAL #n`） |
+| `/teleop/key` | `std_msgs/String` | **订阅** | 键盘节点：无 TTY 时从话题注入按键，用于脚本驱动 |
+
+> `map_republisher` 存在的意义见 §6.5.3：它把一次性发布的非 latched 地图
+> 转成 latched 话题，一举解决 RViz 后启动看不到地图、以及规划器晚订阅
+> 错过地图这两个问题。三种新增的键盘 Marker 话题也都改成了 latched，
+> 否则 RViz 比节点晚启动时图层会是空的。
 
 ---
 
@@ -267,13 +275,56 @@ source devel/setup.bash
 roslaunch planner teleop_planning.launch
 ```
 
-这会同时拉起：地图生成、AllocNet 规划器、键盘节点、数据记录、RViz。
+这会同时拉起：地图生成、地图 latched 转发、AllocNet 规划器、键盘节点、
+数据记录、RViz。等 RViz 里地图和轨迹图层都有内容后，即可下发航点。
 
-**键盘节点必须在独立终端里运行**（需要 TTY）：
+### 键盘操作怎么用
+
+`roslaunch` 启动的节点 **stdin 是 `/dev/null`**，键盘节点读不到按键。
+但它**不会因此退出** —— 会常驻运行并持续发布 `/teleop/cursor`，
+所以 RViz 里始终能看到游标。真正用键盘有两种方式：
+
+**方式一：另开一个终端跑交互版**（两个实例可共存）
 
 ```bash
 source devel/setup.bash
 rosrun planner teleop_keyboard.py
+```
+
+**方式二：往话题里注入按键**，不需要 TTY，便于脚本化复现：
+
+```bash
+# 移动游标 + 下发一个航点（G = 发送，见 2.4 按键速查表）
+rostopic pub -1 /teleop/key std_msgs/String "data: 'wwwd'"
+rostopic pub -1 /teleop/key std_msgs/String "data: 'g'"
+
+# 也支持一次发整串按键，或写 "space"
+rostopic pub -1 /teleop/key std_msgs/String "data: 'aassddg'"
+```
+
+> 早期版本在检测到无 TTY 时会自己退出，导致节点在 RViz 里「凭空消失」；
+> 现已改为常驻，见 §4.1.1。
+
+### 4.1.1 地图为什么要转发一层
+
+`structure_map` 发布的 `/structure_map/global_gridmap` **不是 latched 话题**，
+点云只在生成时发一次。这带来两个后果：
+
+- **RViz 看不到地图** —— RViz 通常比地图节点晚几秒启动，订阅时那一帧
+  早就过去了。
+- **规划器错过地图** —— 更严重。规划器要加载 Torch 模型，订阅建立得
+  比地图生成还晚，`mapInitialized` 永远是 `false`，此后**所有目标点都被
+  静默丢弃**（详见 §6.5）。
+
+`map_republisher` 节点把地图接住后以 **latched** 方式重发。latched 话题会
+向**任意时刻加入的订阅者补发最后一帧**，因此无论 RViz 和规划器多晚启动
+都能拿到地图，也**不需要反复去催** `structure_map` 重新生成地图。
+节点的 `MapTopic` 因此默认指向 `/map/global_gridmap` 而非原始话题。
+
+```
+/structure_map/global_gridmap  (非 latched，一次性)
+    └─> /map/global_gridmap      (latched) ──> 规划器 MapTopic
+    └─> /map/global_gridmap_vis  (latched，降采样) ──> RViz
 ```
 
 ## 4.2 launch 参数
@@ -283,10 +334,14 @@ rosrun planner teleop_keyboard.py
 | `use_gui` | `true` | `false` 则不启动 RViz（无头运行） |
 | `record` | `true` | 是否启动数据记录节点 |
 | `echo` | `false` | 是否打印速度/推力指标 |
+| `republish_map` | `true` | 是否启动地图 latched 转发（见 4.1.1） |
+| `teleop` | `true` | 是否启动键盘节点（headless 脚本驱动时可关掉） |
 | `use_cpu_model` | `true` | 用 `*_cpu.pt`；GPU 需先改 `learning_planner.hpp` |
 | `log_csv` | `$HOME/allocnet_trajectory.csv` | 记录文件路径 |
 | `map_size_x/y/z` | `20/20/5` | 地图尺寸（米） |
 | `inflate_radius` | `0.2` | 障碍膨胀半径，影响可用高度区间 |
+| `cloud` | `/structure_map/global_gridmap` | `structure_map` 的原始发布话题 |
+| `planner_cloud` | `/map/global_gridmap` | 规划器订阅的地图；设 `republish_map:=false` 时须改回 `cloud` |
 
 ## 4.3 数据记录与绘图
 
@@ -532,6 +587,36 @@ rostopic pub -1 /structure_map/change_res std_msgs/Float32 "data: 0.1"
 > `std_msgs/Bool` 与 `std_msgs/Float32`（**不是** `Empty`），
 > 发错类型会被 ROS 拒绝并报 `topic types do not match`。
 
+### 6.5.3 根治办法：让规划器订阅 latched 话题
+
+§6.5.2 的 `change_res` 是**事后补救** —— 它依赖你在正确的时机手工发一次。
+只要规划器订阅的是非 latched 的原始话题，这个竞态就始终存在。
+
+`teleop_planning.launch` 现在默认用 `map_republisher` 根治这个问题：
+规划器的 `MapTopic` 指向 `/map/global_gridmap`，是一个 **latched** 话题。
+
+latched 的语义是：发布者**记住最后一帧**，任何**之后**才建立订阅的连接，
+ROS master 会立刻把这一帧补发过去。于是：
+
+| 场景 | 订阅原始话题 | 订阅 latched 转发 |
+|---|---|---|
+| 规划器比地图晚 30 s 启动 | ✘ 永久错过，目标点静默丢弃 | ✔ 订阅瞬间补齐 |
+| RViz 比地图晚启动 | ✘ 图层空白 | ✔ 立即显示 |
+| 中途重启 RViz / 新开终端调试 | ✘ 得重新催图 | ✔ 随到随取 |
+| 地图内容是否被改变 | 否 | 否（原样转发） |
+
+因此**不再需要**在启动序列里手工发 `change_res`；`map_republisher` 自己
+负责在拿不到地图时催图（有 `nudge_max` 次上限，避免反复 `resetMap`）。
+
+若确实想退回原始行为（例如为了对照实验），用：
+
+```bash
+roslaunch planner teleop_planning.launch \
+    republish_map:=false planner_cloud:=/structure_map/global_gridmap
+```
+
+此时就回到了 §6.5 的竞态，需要按 §6.6 的序列手工 `change_res` 唤醒。
+
 ## 6.6 无 GUI 环境下的完整运行序列
 
 ```bash
@@ -541,9 +626,11 @@ roslaunch planner teleop_planning.launch use_gui:=false
 # 2. 等地图生成完成（约 40 秒），确认日志出现
 #    "Finished generate random map" 与 "model loaded"
 
-# 3. 用 change_res 唤醒规划器的 mapInitialized（不要用 change_map，见 6.5.1）
-rostopic pub -1 /structure_map/change_res std_msgs/Float32 "data: 0.1"
-sleep 4
+# 3. 确认地图转发已就绪（latched，规划器晚订阅也会收到）
+rostopic echo -n1 /map/global_gridmap/width
+#    若超时，说明 map_republisher 还没拿到地图，它会自己重试
+#    nudge_max 次；仍拿不到再手工催一次（不要用 change_map，见 6.5.1）：
+#    rostopic pub -1 /structure_map/change_res std_msgs/Float32 "data: 0.1"
 
 # 4. 下发起终点（高度写在 orientation.z，见 2.2）
 rostopic pub -1 /move_base_simple/goal geometry_msgs/PoseStamped   "{header: {frame_id: 'odom'}, pose: {position: {x: 0.0, y: -9.0, z: 1.5}, orientation: {z: 0.283, w: 1.0}}}"
@@ -559,9 +646,10 @@ rostopic pub -1 /move_base_simple/goal geometry_msgs/PoseStamped   "{header: {fr
 >    （约 4 KB 才落盘）。规划是否成功不要只看日志文件 —— 实测成功时
 >    日志里可能一行都没写出来，应检查 `/visualizer/trajectory` 是否有点。
 > 2. `/structure_map/global_gridmap` **不是 latched 话题**，点云只在生成时
->    发布一次。外部工具若在发布之后才订阅，会永久错过地图。想拿到地图，
->    必须**先建立订阅、再发 `change_res`**，两步在同一进程内按序完成
->    （见 `dump_cloud.py`）。
+>    发布一次。外部工具若在发布之后才订阅，会永久错过地图。想拿到地图：
+>    走 `map_republisher` 转发的 **`/map/global_gridmap`**（latched，随到随取，
+>    推荐）；或者**先建立订阅、再发 `change_res`**，两步在同一进程内按序
+>    完成（见 `dump_cloud.py`）。
 
 ## 6.3 手工构建
 

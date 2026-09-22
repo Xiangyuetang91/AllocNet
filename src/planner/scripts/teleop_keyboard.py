@@ -58,7 +58,7 @@ import tty
 
 import rospy
 from geometry_msgs.msg import PoseStamped
-from std_msgs.msg import ColorRGBA
+from std_msgs.msg import ColorRGBA, String
 from visualization_msgs.msg import Marker, MarkerArray
 
 # --------------------------------------------------------------------------
@@ -143,18 +143,37 @@ class TeleopKeyboard(object):
         self.log_path = rospy.get_param("~log_path", "")
 
         # ----- ROS 接口 -----
+        # 游标与航点用 latch=True：RViz 可能比节点晚启动，
+        # 非 latched 话题会让 RViz 错过消息、显示为空白。
         self.goal_pub = rospy.Publisher(
             rospy.get_param("~goal_topic", "/move_base_simple/goal"),
             PoseStamped, queue_size=10)
         self.cursor_pub = rospy.Publisher(
-            "/teleop/cursor", Marker, queue_size=10)
+            "/teleop/cursor", Marker, queue_size=10, latch=True)
         self.path_pub = rospy.Publisher(
-            "/teleop/waypoints", MarkerArray, queue_size=10)
+            "/teleop/waypoints", MarkerArray, queue_size=10, latch=True)
         self.goal_marker_pub = rospy.Publisher(
-            "/teleop/goal_markers", MarkerArray, queue_size=10)
+            "/teleop/goal_markers", MarkerArray, queue_size=10, latch=True)
+
+        # 无 TTY 时的远程注入通道：向 /teleop/key 发单字符即可驱动
+        # （launch 场景下键盘节点读不到 stdin，见 run() 的说明）
+        self.key_sub = rospy.Subscriber(
+            rospy.get_param("~key_topic", "/teleop/key"),
+            String, self.on_key_msg, queue_size=100)
 
         # 定时刷新 RViz 中的游标
         self.timer = rospy.Timer(rospy.Duration(0.1), self.on_timer)
+
+    def on_key_msg(self, msg):
+        """从话题注入按键（用于 launch / 无 TTY 场景）。"""
+        data = msg.data or ""
+        # 支持一次发多个字符，也支持 "space" 这种写法
+        if data.strip().lower() in ("space", " "):
+            data = " "
+        for ch in data:
+            if not self.on_key(ch):
+                rospy.signal_shutdown("remote quit")
+                return
 
     # ------------------------------------------------------------------
     # 工具函数
@@ -335,6 +354,46 @@ class TeleopKeyboard(object):
             line.points.append(p)
         arr.markers.append(line)
         self.path_pub.publish(arr)
+        self.publish_goal_markers()
+
+    def publish_goal_markers(self):
+        """发布起点/终点标记到 /teleop/goal_markers。
+
+        此前这个 publisher 建了却从未发布过任何消息（死代码），
+        RViz 里加了这个图层也是空的。
+        约定：奇数下标为 START，偶数下标为 GOAL —— 因为按 G 是两段式的。
+        """
+        arr = MarkerArray()
+        for i, (wx, wy, wz) in enumerate(self.sent_waypoints):
+            is_start = (i % 2 == 0)
+            color = (ColorRGBA(0.55, 0.34, 0.29, 1.0) if is_start
+                     else ColorRGBA(0.89, 0.47, 0.76, 1.0))
+            m = self.make_marker("teleop_goal_markers", i, 0.6, color,
+                                 Marker.SPHERE)
+            m.pose.position.x = wx
+            m.pose.position.y = wy
+            m.pose.position.z = wz
+            arr.markers.append(m)
+
+            # 文字标签，RViz 里能直接看出哪个是起点哪个是终点
+            t = self.make_marker("teleop_goal_markers", 100 + i, 0.0, color,
+                                 Marker.TEXT_VIEW_FACING)
+            t.pose.position.x = wx
+            t.pose.position.y = wy
+            t.pose.position.z = wz + 0.6
+            t.text = ("START #%d" if is_start else "GOAL #%d") % (i // 2 + 1)
+            t.scale.z = 0.35
+            arr.markers.append(t)
+
+        # 清掉多余的旧标记（航点变少时 RViz 会残留）
+        for j in range(len(self.sent_waypoints), len(self.sent_waypoints) + 6):
+            for mid in (j, 100 + j):
+                d = self.make_marker("teleop_goal_markers", mid, 0.0,
+                                     ColorRGBA(0, 0, 0, 0))
+                d.action = Marker.DELETE
+                arr.markers.append(d)
+
+        self.goal_marker_pub.publish(arr)
 
     def on_timer(self, _evt):
         self.publish_cursor()
@@ -355,14 +414,26 @@ class TeleopKeyboard(object):
         self.render()
         rospy.loginfo("[teleop] 键盘节点已启动，按 H 查看帮助，Ctrl-C 退出。")
 
-        fd = sys.stdin.fileno()
-        if not sys.stdin.isatty():
+        # 先发布一次，让 RViz 立刻能看到游标（配合 latch=True 常驻显示）
+        self.publish_cursor()
+        self.publish_waypoints()
+
+        interactive = self._stdin_is_tty()
+        if not interactive:
+            # ⚠ 关键：从 launch 启动时 stdin 是 /dev/null，
+            # 一旦 read 返回空就退出，节点会在 RViz 里凭空消失。
+            # 因此这里**不退出**，改为常驻：游标继续以 10Hz 发布，
+            # 按键改由 /teleop/key 话题注入（见 on_key_msg）。
             rospy.logwarn(
-                "[teleop] stdin 不是终端，退化为逐行读取模式"
-                "（每行一个按键）。若需交互，请用 rosrun 在终端中直接运行。")
-            self.run_line_mode()
+                "[teleop] stdin 不是终端，键盘输入不可用 —— 节点将常驻运行，"
+                "游标照常发布到 /teleop/cursor。"
+                "如需真实键盘操作，请在终端里 rosrun planner teleop_keyboard.py；"
+                "如需脚本驱动，向 /teleop/key 发 std_msgs/String 即可。")
+            while not rospy.is_shutdown():
+                rospy.sleep(0.2)
             return
 
+        fd = sys.stdin.fileno()
         old = termios.tcgetattr(fd)
         try:
             tty.setcbreak(fd)
@@ -372,22 +443,33 @@ class TeleopKeyboard(object):
                     continue
                 key = sys.stdin.read(1)
                 if not key:
+                    # 终端被关闭（如 ssh 断开）→ 转为常驻而不是退出
+                    rospy.logwarn("[teleop] stdin 已关闭，转为常驻模式。")
                     break
                 if not self.on_key(key):
                     break
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old)
             sys.stdout.write("\n")
-            rospy.loginfo("[teleop] 已退出，终端属性已恢复。")
+            rospy.loginfo("[teleop] 终端属性已恢复。")
 
-    def run_line_mode(self):
+        # 退出交互循环后仍保持节点存活，使 RViz 图层不掉线
         while not rospy.is_shutdown():
-            line = sys.stdin.readline()
-            if not line:
-                break
-            for key in line.strip():
-                if not self.on_key(key):
-                    return
+            rospy.sleep(0.2)
+
+    @staticmethod
+    def _stdin_is_tty():
+        """判断 stdin 是否是可交互终端。
+
+        `sys.stdin` 在 launch 下可能是 None，直接调用 isatty() 会抛异常，
+        因此这里逐层判断。
+        """
+        try:
+            if sys.stdin is None:
+                return False
+            return bool(sys.stdin.isatty())
+        except (ValueError, AttributeError, OSError):
+            return False
 
 
 def main():

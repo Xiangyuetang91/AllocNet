@@ -1,189 +1,177 @@
 Panels:
   - Class: rviz/Displays
-    Help Height: 0
+    Help Height: 78
     Name: Displays
     Property Tree Widget:
       Expanded:
         - /Global Options1
-        - /Axes1
-        - /GlobalMap1
-        - /GlobalMap1/GlobalMap1
-        - /GlobalMap1/GlobalMap1/Autocompute Value Bounds1
-        - /Keyboard Teleop1
-      Splitter Ratio: 0.5472221970558167
-    Tree Height: 1136
+        - /Map1
+        - /Teleop1
+        - /AllocNet1
+      Splitter Ratio: 0.5
+    Tree Height: 700
   - Class: rviz/Selection
     Name: Selection
   - Class: rviz/Tool Properties
     Expanded:
-      - /Interact1
-      - /2D Pose Estimate1
       - /2D Nav Goal1
       - /Publish Point1
     Name: Tool Properties
-    Splitter Ratio: 0.5886790156364441
+    Splitter Ratio: 0.588
   - Class: rviz/Views
     Expanded:
       - /Current View1
     Name: Views
     Splitter Ratio: 0.5
-  - Class: rviz/Time
-    Name: Time
-    SyncMode: 0
-    SyncSource: GlobalMap
 Preferences:
-  PromptSaveOnExit: true
+  PromptSaveOnExit: false
 Toolbars:
   toolButtonStyle: 2
 Visualization Manager:
   Class: ""
   Displays:
-    - Alpha: 1
-      Cell Size: 1
-      Class: rviz/Grid
-      Color: 160; 160; 164
+    # ---------------------------------------------------------------
+    # 1. 地图 / 障碍物点云
+    #    订阅 map_republisher 转发的 **latched** 话题，
+    #    这样 RViz 无论何时启动都能立刻看到地图。
+    #    直接用 /structure_map/global_gridmap 会因非 latched 而错过。
+    # ---------------------------------------------------------------
+    - Class: rviz/PointCloud2
+      Enabled: true
+      Name: MapCloud
+      Topic: /map/global_gridmap_vis
+      Queue Size: 5
+      Style: Squares
+      Size (Pixels): 3
+      Size (m): 0.05
+      Color Transformer: AxisColor
+      Axis: Z
+      Autocompute Intensity Bounds: true
+      Autocompute Value Bounds:
+        Min Value: 0
+        Max Value: 5
+        Value: true
+      Use rainbow: true
+      Invert Rainbow: false
+      Position Transformer: XYZ
+      Selectable: true
+      Unreliable: false
+      Use Fixed Frame: true
+      Alpha: 0.9
+
+    - Class: rviz/PointCloud2
       Enabled: false
-      Line Style:
-        Line Width: 0.029999999329447746
-        Value: Lines
+      Name: MapCloudFull
+      Topic: /map/global_gridmap
+      Queue Size: 2
+      Style: Points
+      Size (Pixels): 2
+      Color Transformer: FlatColor
+      Color: 130; 130; 130
+      Selectable: false
+      Unreliable: false
+      Use Fixed Frame: true
+      Alpha: 0.5
+
+    # ---------------------------------------------------------------
+    # 2. 键盘操控游标 (/teleop/cursor)
+    # ---------------------------------------------------------------
+    - Class: rviz/Marker
+      Enabled: true
+      Name: TeleopCursor
+      Marker Topic: /teleop/cursor
+      Queue Size: 20
+      Namespaces:
+        teleop_cursor: true
+
+    # ---------------------------------------------------------------
+    # 3. 起点与目标点标记 (/teleop/goal_markers)
+    # ---------------------------------------------------------------
+    - Class: rviz/MarkerArray
+      Enabled: true
+      Name: GoalMarkers
+      Marker Topic: /teleop/goal_markers
+      Queue Size: 20
+      Namespaces:
+        teleop_goal_markers: true
+
+    # 键盘下发的航点折线（辅助图层）
+    - Class: rviz/MarkerArray
+      Enabled: true
+      Name: TeleopWaypoints
+      Marker Topic: /teleop/waypoints
+      Queue Size: 20
+      Namespaces:
+        teleop_waypoints: true
+
+    # ---------------------------------------------------------------
+    # 4. 规划生成的 3D 轨迹
+    # ---------------------------------------------------------------
+    - Class: rviz/Marker
+      Enabled: true
+      Name: Trajectory
+      Marker Topic: /visualizer/trajectory
+      Queue Size: 20
+      Namespaces:
+        trajectory: true
+
+    - Class: rviz/Marker
+      Enabled: true
+      Name: Route
+      Marker Topic: /visualizer/route
+      Queue Size: 20
+      Namespaces:
+        route: true
+
+    # 飞行器实时位置 + 起终点球
+    - Class: rviz/Marker
+      Enabled: true
+      Name: Spheres
+      Marker Topic: /visualizer/spheres
+      Queue Size: 20
+      Namespaces:
+        spheres: true
+        StartGoal: true
+
+    # 安全飞行走廊
+    - Class: rviz/Marker
+      Enabled: true
+      Name: Polytope
+      Marker Topic: /visualizer/mesh
+      Queue Size: 100
+      Namespaces:
+        mesh: true
+
+    - Class: rviz/Marker
+      Enabled: true
+      Name: Waypoints
+      Marker Topic: /visualizer/waypoints
+      Queue Size: 20
+      Namespaces:
+        waypoints: true
+
+    - Class: rviz/Grid
+      Enabled: true
       Name: Grid
-      Normal Cell Count: 0
-      Offset:
-        X: 0
-        Y: 0
-        Z: 0
+      Cell Size: 1
       Plane: XY
-      Plane Cell Count: 10
+      Plane Cell Count: 20
+      Color: 100; 100; 100
+      Alpha: 0.3
       Reference Frame: <Fixed Frame>
-      Value: false
+
     - Class: rviz/Axes
       Enabled: true
-      Length: 2
       Name: Axes
-      Radius: 0.20000000298023224
+      Length: 2
+      Radius: 0.15
       Reference Frame: <Fixed Frame>
-      Value: true
-    - Class: rviz/Group
-      Displays:
-        - Alpha: 1
-          Autocompute Intensity Bounds: true
-          Autocompute Value Bounds:
-            Max Value: 4.900000095367432
-            Min Value: 0.10000000149011612
-            Value: true
-          Axis: Z
-          Channel Name: intensity
-          Class: rviz/PointCloud2
-          Color: 255; 255; 255
-          Color Transformer: AxisColor
-          Decay Time: 0
-          Enabled: true
-          Invert Rainbow: false
-          Max Color: 255; 255; 255
-          Max Intensity: 4096
-          Min Color: 0; 0; 0
-          Min Intensity: 0
-          Name: GlobalMap
-          Position Transformer: XYZ
-          Queue Size: 10
-          Selectable: true
-          Size (Pixels): 3
-          Size (m): 0.029999999329447746
-          Style: Squares
-          Topic: /structure_map/global_gridmap
-          Unreliable: false
-          Use Fixed Frame: true
-          Use rainbow: true
-          Value: true
-      Enabled: true
-      Name: GlobalMap
-    - Class: rviz/Group
-      Displays:
-        - Class: rviz/Marker
-          Enabled: true
-          Marker Topic: /visualizer/text
-          Name: Text
-          Namespaces:
-            {}
-          Queue Size: 100
-          Value: true
-        - Class: rviz/Marker
-          Enabled: true
-          Marker Topic: /visualizer/trajectory
-          Name: Trajectory
-          Namespaces:
-            trajectory: true
-          Queue Size: 100
-          Value: true
-        - Class: rviz/Marker
-          Enabled: true
-          Marker Topic: /visualizer/spheres
-          Name: Spheres
-          Namespaces:
-            StartGoal: true
-            spheres: true
-          Queue Size: 100
-          Value: true
-        - Class: rviz/Marker
-          Enabled: false
-          Marker Topic: /visualizer/edge
-          Name: Edge
-          Namespaces:
-            {}
-          Queue Size: 100
-          Value: false
-        - Class: rviz/Marker
-          Enabled: true
-          Marker Topic: /visualizer/mesh
-          Name: Mesh
-          Namespaces:
-            {}
-          Queue Size: 100
-          Value: true
-        - Class: rviz/Marker
-          Enabled: true
-          Marker Topic: /visualizer/route
-          Name: Route
-          Namespaces:
-            {}
-          Queue Size: 100
-          Value: true
-        - Class: rviz/Marker
-          Enabled: true
-          Marker Topic: /visualizer/waypoints
-          Name: Waypoints
-          Namespaces:
-            {}
-          Queue Size: 100
-          Value: true
-      Enabled: true
-      Name: Vis
-    - Class: rviz/Group
-      Displays:
-        - Class: rviz/Marker
-          Enabled: true
-          Marker Topic: /teleop/cursor
-          Name: Cursor
-          Namespaces:
-            teleop_cursor: true
-          Queue Size: 100
-          Value: true
-        - Class: rviz/MarkerArray
-          Enabled: true
-          Marker Topic: /teleop/waypoints
-          Name: Keyed Waypoints
-          Namespaces:
-            teleop_waypoints: true
-          Queue Size: 100
-          Value: true
-      Enabled: true
-      Name: Keyboard Teleop
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48
     Default Light: true
     Fixed Frame: odom
-    Frame Rate: 60
+    Frame Rate: 30
   Name: root
   Tools:
     - Class: rviz/Interact
@@ -193,10 +181,7 @@ Visualization Manager:
     - Class: rviz/FocusCamera
     - Class: rviz/Measure
     - Class: rviz/SetInitialPose
-      Theta std deviation: 0.2617993950843811
       Topic: /initialpose
-      X std deviation: 0.5
-      Y std deviation: 0.5
     - Class: rviz/SetGoal
       Topic: /move_base_simple/goal
     - Class: rviz/PublishPoint
@@ -206,32 +191,34 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz/Orbit
-      Distance: 25.094188690185547
-      Enable Stereo Rendering:
-        Stereo Eye Separation: 0.05999999865889549
-        Stereo Focal Distance: 1
-        Swap Stereo Eyes: false
-        Value: false
-      Field of View: 0.7853981852531433
-      Focal Point:
-        X: -1.8981117010116577
-        Y: -0.23192614316940308
-        Z: -0.5276687145233154
-      Focal Shape Fixed Size: false
-      Focal Shape Size: 0.05000000074505806
-      Invert Z Axis: false
       Name: Current View
-      Near Clip Distance: 0.009999999776482582
-      Pitch: 1.5697963237762451
+      Distance: 26
+      Focal Point:
+        X: 0
+        Y: 0
+        Z: 1.5
+      Pitch: 0.55
+      Yaw: 2.4
+      Field of View: 0.9
+      Near Clip Distance: 0.05
       Target Frame: <Fixed Frame>
-      Yaw: 3.1366639137268066
+      Invert Z Axis: false
+      Focal Shape Fixed Size: false
+      Focal Shape Size: 0.05
+      Enable Stereo Rendering:
+        Value: false
 Window Geometry:
-  Displays:
-    collapsed: false
-  Height: 1016
+  Height: 1000
+  Width: 1600
+  X: 0
+  Y: 0
   Hide Left Dock: false
   Hide Right Dock: false
-  QMainWindow State: ""
-  Width: 1920
-  X: 0
-  Y: 27
+  Displays:
+    collapsed: false
+  Selection:
+    collapsed: false
+  Tool Properties:
+    collapsed: false
+  Views:
+    collapsed: true
