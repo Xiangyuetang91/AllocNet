@@ -400,6 +400,35 @@ time,x,y,z,v,source
 运行条件：`teleop_planning.launch`，CPU 推理，地图 20×20×5 m / 0.1 m 分辨率，
 规划起终点 (0, −9, 1.5) → (9, 9, 1.5)。
 
+### RViz 实时规划画面
+
+这是**在 RViz 里实际跑出来的画面**（非离屏渲染、非事后绘制），
+用 Xvfb 虚屏 + `import` 抓屏采集，坐标与订阅关系都是真实 ROS 运行时的：
+
+<p align="center">
+  <img src="docs/assets/rviz_planning.png" width="620"/>
+  <br/>
+  <em>
+    <b>蓝</b>：AllocNet 优化后的平滑轨迹　
+    <b>红</b>：OMPL 前端几何路径<br/>
+    <b>绿</b>：安全飞行走廊边界　
+    <b>球体</b>：键盘下发的起点（红，带 START 标签）与终点（橙）<br/>
+    <b>灰点</b>：真实障碍点云（半透明，便于看清轨迹穿行）
+  </em>
+</p>
+
+红蓝两条线的对比正是本算法的意义所在：红色折线是未经时间分配的
+前端路径，蓝色是 AllocNet 推理 + QP 优化后的轨迹，明显更平滑，
+且始终走在绿色走廊的中心。
+
+### 遥操作规划动画
+
+从「键盘移动游标 → 下发起点 → 下发终点 → 轨迹生成」的完整过程：
+
+<p align="center">
+  <img src="docs/assets/teleop_demo.gif" width="620"/>
+</p>
+
 ### 三维轨迹
 
 <p align="center">
@@ -452,8 +481,8 @@ time,x,y,z,v,source
 | `docs/assets/trajectory_topdown.png` | 同上 + 真实地图点云 | ✅ |
 | `docs/assets/speed_profile.png` | 同上 | ✅ |
 | `docs/assets/trajectory_anim.gif` | 同上数据渲染 | ✅ |
-| `docs/assets/rviz_planning.png` | 需图形桌面交互采集 | ⏳ 未产出 |
-| `docs/assets/teleop_demo.gif` | 同上 | ⏳ 未产出 |
+| `docs/assets/rviz_planning.png` | VM 内 RViz 实拍（Xvfb 虚屏 + `import` 抓屏） | ✅ |
+| `docs/assets/teleop_demo.gif` | 同上，逐帧抓取后合成 | ✅ |
 
 轨迹数据来自 `record_trajectory.py` 在 VM 内实际运行中抓取的
 `allocnet_trajectory.csv`；障碍点云来自 `dump_cloud.py` 导出的真实
@@ -754,15 +783,90 @@ cd ~/catkin_ws && catkin build
 
 ## 6.4 采集演示素材
 
-```bash
-# VM 内：自动演示 + 抓帧
-sudo apt install -y xdotool scrot imagemagick
-bash capture_demo.sh
+本节记录 §5.2 里那两张素材（`rviz_planning.png` / `teleop_demo.gif`）
+的真实采集方法。**别用图形桌面下的 `scrot`** —— 见下面的坑。
 
-# 宿主机：把 frames/ 取回后合成 GIF
-python make_gif.py --frames frames/ --out docs/assets/teleop_demo.gif \
-                   --crop 0,1080,0,1920 --width 900 --stride 2 --fps 8
+### 为什么必须用 Xvfb 而不是登录桌面的 `:0`
+
+VM 里的 GNOME 桌面（`:0`）在无 GPU 的 VMware 环境下**渲染会静默冻结**：
+进程都活着、`xdpyinfo` 正常、窗口树正常，但画面不再更新。
+表现极具迷惑性 —— `scrot` 每次都能"成功"返回一张图，但**永远是同一张
+陈旧帧**（md5 完全一致），连新开的 `xterm` 都不会出现在画面里。
+一度让人以为是 RViz 没订阅话题。
+
+验证是否冻结：连续抓两张，比 md5；再 `xdotool mousemove` 后抓一张，
+如果三者相同，就是冻结了。
+
+### 正确做法：独立虚屏
+
+```bash
+sudo apt install -y xvfb imagemagick     # Xvfb + import
+
+# 1. 起虚屏（带 GLX，RViz 需要）
+Xvfb :99 -screen 0 1280x800x24 -ac +extension GLX +render -noreset &
+
+# 2. 在虚屏上跑仿真。RViz 用抓图专用配置（灰色地图，见下）
+export DISPLAY=:99
+export LIBGL_ALWAYS_SOFTWARE=1           # 无 GPU，强制软件渲染
+roslaunch planner teleop_planning.launch use_gui:=false
+rviz -d /tmp/capture_view.rviz &
+
+# 3. 抓屏（用 import，不要用 scrot）
+import -display :99 -window root /tmp/f.png
 ```
+
+> ⚠ **不要靠 `xdotool` 操作 RViz 窗口**（改相机、点图层）。
+> 合成输入在虚屏/无焦点窗口上基本不生效，且反复操作后 RViz 会**停止重绘**
+> （帧 md5 不再变化）。相机角度和图层开关请**直接写进 `.rviz` 配置文件**，
+> 重启 RViz 生效。
+
+### 抓图专用 RViz 配置
+
+直接照搬 `teleop_planner.rviz` 会得到一张"看不清"的图：点云用
+`AxisColor(Z)` 渲染成密集彩虹，而轨迹只是 0.15 m 宽的细蓝线，完全被淹没。
+抓图配置改三处：
+
+| 项 | 值 | 原因 |
+|---|---|---|
+| `MapCloud` 的 `Color Transformer` | `FlatColor` + 灰 `165;165;165` | 去掉彩虹噪声 |
+| `MapCloud` 的 `Alpha` | `0.22` | 半透明才看得见后面的轨迹 |
+| `Polytope` 图层 | 删除 | 蓝色走廊会盖住轨迹 |
+
+### 航点怎么选（重要）
+
+**不是所有起终点都能规划成功。** AllocNet 按固定 5 段推理时间分配，
+当几何构型让某段时长推理为 0 时，会打印
+
+```
+output_time  1.9208  1.1000  1.2441  1.4265  0.0000
+time and seg does not fit, the segment is5
+```
+
+然后**放弃本次规划**（不报错、不出轨迹）。实测成功率约 1/5，
+且与方向/距离强相关。采集时**多试几组**，哪组成功用哪组：
+
+```bash
+python3 src/planner/scripts/capture/capture_teleop_demo.py
+```
+
+按键通过 `/teleop/key` 注入（无需 TTY，见 §4.1）：
+
+```bash
+rostopic pub -1 /teleop/key std_msgs/String "data: 'w'"   # 移动游标
+rostopic pub -1 /teleop/key std_msgs/String "data: 'g'"   # 下发航点（两次成对）
+```
+
+### 合成
+
+```python
+# VM 内：裁 3D 视口 -> 静态图 + 动图
+python3 src/planner/scripts/capture/make_assets.py
+```
+
+源帧与产出：
+
+- `rviz_planning.png` — 500×375，规划完成瞬间，轨迹居中
+- `teleop_demo.gif` — 640×480，从游标移动到轨迹生成的全过程
 
 ---
 
